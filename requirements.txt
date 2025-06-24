@@ -1,0 +1,7 @@
+Flask # veya FastAPI (Web framework)
+openai # OpenAI SDK (LLM ve Embedding için)
+pinecone # Pinecone SDK (Vektör veritabanından retrieval için)
+google-generativeai # Gemini API için (Görsel anlama ve yanıt için)
+python-dotenv # Lokal ortam değişkenleri için
+gunicorn # Railway'de Flask uygulamasını çalıştırmak için
+httpx # OpenAI ve Pinecone istemcilerinde SSL doğrulamayı yönetmek için
