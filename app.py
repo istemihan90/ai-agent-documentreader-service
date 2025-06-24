@@ -2,7 +2,7 @@ import os
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from openai import OpenAI
-from pinecone import Pinecone, Index
+from pinecone import Pinecone # Corrected: Removed 'Index' as it's not a direct import
 import google.generativeai as genai
 import base64
 import httpx # For verify=False with OpenAI and Pinecone clients
@@ -21,7 +21,8 @@ GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
 # verify=False is included for potential SSL certificate issues in some environments.
 openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(verify=False))
 pinecone_client = Pinecone(api_key=PINECONE_API_KEY, verify_ssl=False)
-pinecone_index = pinecone_client.Index(PINECONE_INDEX_NAME)
+# Initialize the Pinecone Index instance from the client
+pinecone_index = pinecone_client.Index(PINECONE_INDEX_NAME) 
 
 # Configure Gemini API
 if GOOGLE_GEMINI_API_KEY:
@@ -113,7 +114,7 @@ def health_check():
     return jsonify({"status": "ok", "service": "ai-agent-documentreader"}), 200
 
 # Main endpoint for AI Agent queries (other agents will use this)
-@app.route("/query", methods=["POST"]) # Değişiklik: Endpoint adı "/query" olarak güncellendi
+@app.route("/query", methods=["POST"])
 def query_document_endpoint():
     """
     Diğer AI ajanlarından veya kullanıcılardan gelen sorguları işler.
