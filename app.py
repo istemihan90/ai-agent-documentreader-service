@@ -7,8 +7,10 @@ import google.generativeai as genai
 import base64
 import httpx 
 from flask_cors import CORS 
-from google.cloud import storage # New: For GCS thumbnail retrieval
-import io # New: For handling image bytes
+from google.cloud import storage 
+import io 
+from google.oauth2 import service_account # New: For service account credentials
+import json # New: For parsing JSON credentials
 
 load_dotenv()
 
@@ -20,8 +22,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID") # New: For GCS client
-GCP_PROCESSED_BUCKET_NAME = os.getenv("GCP_PROCESSED_BUCKET_NAME") # New: For GCS client
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID") 
+GCP_PROCESSED_BUCKET_NAME = os.getenv("GCP_PROCESSED_BUCKET_NAME")
+GOOGLE_APPLICATION_CREDENTIALS_BASE64 = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64") # New: For AI Agent's GCS access
 
 # Initialize OpenAI and Pinecone clients
 openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(verify=False))
@@ -29,8 +32,25 @@ pinecone_client = Pinecone(api_key=PINECONE_API_KEY, verify_ssl=False)
 pinecone_index = pinecone_client.Index(PINECONE_INDEX_NAME) 
 
 # Initialize Google Cloud Storage client (AI Agent also needs to access GCS for thumbnails)
-storage_client = storage.Client(project=GCP_PROJECT_ID)
+storage_client = None
+if GOOGLE_APPLICATION_CREDENTIALS_BASE64:
+    try:
+        decoded_credentials_json_string = base64.b64decode(GOOGLE_APPLICATION_CREDENTIALS_BASE64).decode('utf-8')
+        GCP_SERVICE_ACCOUNT_INFO = json.loads(decoded_credentials_json_string)
+        
+        credentials = service_account.Credentials.from_service_account_info(GCP_SERVICE_ACCOUNT_INFO)
+        storage_client = storage.Client(project=GCP_PROJECT_ID, credentials=credentials)
+        print("AI Agent Google Cloud Storage istemcisi manuel kimlik bilgileriyle başlatıldı.")
 
+    except Exception as e:
+        print(f"Hata: AI Agent Google Cloud kimlik bilgilerini işlerken sorun oluştu (Base64 Decode/JSON Parse): {e}")
+        import traceback
+        traceback.print_exc()
+        raise RuntimeError("AI Agent Google Cloud Storage kimlik doğrulama başarısız oldu.")
+else:
+    print("GOOGLE_APPLICATION_CREDENTIALS_BASE64 ortam değişkeni AI Agent için bulunamadı. Lütfen Railway'de ayarladığınızdan emin olun.")
+    # Fallback to default client if credentials are not provided (will likely fail for GCS access)
+    storage_client = storage.Client(project=GCP_PROJECT_ID)
 
 # Configure Gemini API
 if GOOGLE_GEMINI_API_KEY:
@@ -53,16 +73,22 @@ def get_thumbnail_from_gcs(file_name: str):
     """
     thumbnail_file_name = f"{os.path.splitext(file_name)[0]}_thumbnail.jpeg"
     try:
-        bucket = storage_client.bucket(GCP_PROCESSED_BUCKET_NAME)
-        blob = bucket.blob(thumbnail_file_name)
-        if blob.exists():
-            thumbnail_bytes = blob.download_as_bytes()
-            return base64.b64encode(thumbnail_bytes).decode('utf-8')
+        if storage_client: # Ensure storage_client is initialized
+            bucket = storage_client.bucket(GCP_PROCESSED_BUCKET_NAME)
+            blob = bucket.blob(thumbnail_file_name)
+            if blob.exists():
+                thumbnail_bytes = blob.download_as_bytes()
+                return base64.b64encode(thumbnail_bytes).decode('utf-8')
+            else:
+                print(f"Uyarı: {thumbnail_file_name} GCS'de bulunamadı.")
+                return None
         else:
-            print(f"Uyarı: {thumbnail_file_name} GCS'de bulunamadı.")
+            print("Uyarı: Google Cloud Storage istemcisi AI Agent'ta başlatılmadı. Küçük resim çekilemez.")
             return None
     except Exception as e:
         print(f"GCS'den küçük resim indirme hatası: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Helper function to perform RAG (Retrieval-Augmented Generation)
@@ -114,17 +140,26 @@ def retrieve_and_generate(query_text, image_data=None, document_name=None):
     if messages_parts and any(isinstance(part, dict) and "mime_type" in part for part in messages_parts):
         # If there's an image (either direct upload or thumbnail), use Gemini Vision Pro
         # Add context to Gemini prompt if available
+        gemini_text_part = query_text
         if context:
-            gemini_prompt = f"Aşağıdaki belgelerden ve görselden faydalanarak soruyu yanıtlayın. Eğer bilgi yoksa, 'Bilgi bulunamadı' diye belirtin.\n\nBelgeler:\n{context}\n\nSoru: {query_text}\nCevap:"
-            # Replace query_text in messages_parts with the enriched prompt
-            messages_parts[0] = gemini_prompt if query_text else "" # Ensure text part is first
-        
+            gemini_text_part = f"Aşağıdaki belgelerden ve görselden faydalanarak soruyu yanıtlayın. Eğer bilgi yoksa, 'Bilgi bulunamadı' diye belirtin.\n\nBelgeler:\n{context}\n\nSoru: {query_text}\nCevap:"
+            
+        # Ensure the text part is always the first part in the message
+        final_messages_parts = []
+        if gemini_text_part:
+            final_messages_parts.append(gemini_text_part)
+        for part in messages_parts:
+            if isinstance(part, dict): # Add image parts
+                final_messages_parts.append(part)
+
         try:
             model = genai.GenerativeModel('gemini-pro-vision') 
-            response = model.generate_content(messages_parts)
+            response = model.generate_content(final_messages_parts)
             return response.text
         except Exception as e:
             print(f"Gemini API veya görsel işleme hatası: {e}")
+            import traceback
+            traceback.print_exc()
             return "Üzgünüm, görselle ilgili sorunuza yanıt veremiyorum veya görsel işlenirken bir hata oluştu."
 
     else:
@@ -150,8 +185,8 @@ def health_check():
 def query_document_endpoint():
     data = request.get_json()
     query_text = data.get("queryText")
-    image_data = data.get("imageData") # Base64 encoded image string (optional from frontend)
-    document_name = data.get("documentName") # New: Optional, to hint at which doc's thumbnail to use
+    image_data = data.get("imageData") 
+    document_name = data.get("documentName") 
 
     if not query_text and not image_data and not document_name:
         return jsonify({"error": "Sorgu metni, görsel verisi veya doküman adı gerekli."}), 400
