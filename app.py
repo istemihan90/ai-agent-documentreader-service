@@ -9,8 +9,8 @@ import httpx
 from flask_cors import CORS 
 from google.cloud import storage 
 import io 
-from google.oauth2 import service_account # New: For service account credentials
-import json # New: For parsing JSON credentials
+from google.oauth2 import service_account 
+import json 
 
 load_dotenv()
 
@@ -24,14 +24,14 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID") 
 GCP_PROCESSED_BUCKET_NAME = os.getenv("GCP_PROCESSED_BUCKET_NAME")
-GOOGLE_APPLICATION_CREDENTIALS_BASE64 = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64") # New: For AI Agent's GCS access
+GOOGLE_APPLICATION_CREDENTIALS_BASE64 = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64") 
 
 # Initialize OpenAI and Pinecone clients
 openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(verify=False))
 pinecone_client = Pinecone(api_key=PINECONE_API_KEY, verify_ssl=False)
 pinecone_index = pinecone_client.Index(PINECONE_INDEX_NAME) 
 
-# Initialize Google Cloud Storage client (AI Agent also needs to access GCS for thumbnails)
+# Initialize Google Cloud Storage client
 storage_client = None
 if GOOGLE_APPLICATION_CREDENTIALS_BASE64:
     try:
@@ -49,7 +49,6 @@ if GOOGLE_APPLICATION_CREDENTIALS_BASE64:
         raise RuntimeError("AI Agent Google Cloud Storage kimlik doğrulama başarısız oldu.")
 else:
     print("GOOGLE_APPLICATION_CREDENTIALS_BASE64 ortam değişkeni AI Agent için bulunamadı. Lütfen Railway'de ayarladığınızdan emin olun.")
-    # Fallback to default client if credentials are not provided (will likely fail for GCS access)
     storage_client = storage.Client(project=GCP_PROJECT_ID)
 
 # Configure Gemini API
@@ -73,7 +72,7 @@ def get_thumbnail_from_gcs(file_name: str):
     """
     thumbnail_file_name = f"{os.path.splitext(file_name)[0]}_thumbnail.jpeg"
     try:
-        if storage_client: # Ensure storage_client is initialized
+        if storage_client: 
             bucket = storage_client.bucket(GCP_PROCESSED_BUCKET_NAME)
             blob = bucket.blob(thumbnail_file_name)
             if blob.exists():
@@ -113,7 +112,7 @@ def retrieve_and_generate(query_text, image_data=None, document_name=None):
     
     # Check if we need to retrieve a thumbnail from GCS based on document_name
     thumbnail_base64 = None
-    if document_name and not image_data: # Only fetch thumbnail if no direct image data provided
+    if document_name and not image_data: 
         thumbnail_base64 = get_thumbnail_from_gcs(document_name)
         if thumbnail_base64:
             print(f"'{document_name}' için GCS'den küçük resim başarıyla çekildi.")
@@ -153,7 +152,8 @@ def retrieve_and_generate(query_text, image_data=None, document_name=None):
                 final_messages_parts.append(part)
 
         try:
-            model = genai.GenerativeModel('gemini-pro-vision') 
+            # Changed model name from 'gemini-pro-vision' to 'gemini-1.5-flash'
+            model = genai.GenerativeModel('gemini-1.5-flash') 
             response = model.generate_content(final_messages_parts)
             return response.text
         except Exception as e:

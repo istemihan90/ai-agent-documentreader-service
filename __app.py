@@ -2,14 +2,17 @@ import os
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from openai import OpenAI
-from pinecone import Pinecone # Corrected: Removed 'Index' as it's not a direct import
+from pinecone import Pinecone 
 import google.generativeai as genai
 import base64
 import httpx # For verify=False with OpenAI and Pinecone clients
+from flask_cors import CORS # Added for CORS support
 
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app) # Enable CORS for all origins and all routes for simplicity in development.
+          # In production, you might want to restrict origins: CORS(app, resources={r"/api/*": {"origins": "http://localhost:8000"}})
 
 # Retrieve environment variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -18,10 +21,8 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY")
 
 # Initialize OpenAI and Pinecone clients
-# verify=False is included for potential SSL certificate issues in some environments.
 openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=httpx.Client(verify=False))
 pinecone_client = Pinecone(api_key=PINECONE_API_KEY, verify_ssl=False)
-# Initialize the Pinecone Index instance from the client
 pinecone_index = pinecone_client.Index(PINECONE_INDEX_NAME) 
 
 # Configure Gemini API
@@ -49,40 +50,32 @@ def retrieve_and_generate(query_text, image_data=None):
     """
     retrieved_chunks = []
     if query_text:
-        # Metin sorgusu için embedding alın
         query_embedding = get_embedding(query_text)
-        # İlgili belge parçalarını Pinecone'dan sorgulayın
         query_results = pinecone_index.query(
             vector=query_embedding,
-            top_k=5, # En alakalı 5 parçayı alın
+            top_k=5, 
             include_metadata=True
         )
         for match in query_results.matches:
             if 'chunk_text' in match.metadata:
                 retrieved_chunks.append(match.metadata['chunk_text'])
     
-    # Pinecone'dan çekilen bağlamı birleştirin
     context = "\n".join(retrieved_chunks)
     
-    # Gemini/OpenAI için içeriği hazırlayın
     messages = []
     if image_data:
-        # Multimodal (görsel + metin) sorgular için Gemini Vision modelini kullanın
-        # Base64 kodlu görsel verisini decode edin
         try:
             image_bytes = base64.b64decode(image_data)
             image_part = {
-                "mime_type": "image/jpeg", # Varsayılan olarak JPEG, dinamik olarak ayarlanabilir
+                "mime_type": "image/jpeg", 
                 "data": image_bytes
             }
-            # Eğer bir metin sorgusu da varsa, onu da ekleyin
             if query_text:
                 messages.append({"role": "user", "parts": [query_text, image_part]})
             else:
                 messages.append({"role": "user", "parts": [image_part]})
             
-            # Gemini Vision Pro modelini kullanın
-            model = genai.GenerativeModel('gemini-pro-vision') # Or 'gemini-1.0-pro-vision'
+            model = genai.GenerativeModel('gemini-pro-vision') 
             response = model.generate_content(messages)
             return response.text
         except Exception as e:
@@ -90,17 +83,13 @@ def retrieve_and_generate(query_text, image_data=None):
             return "Üzgünüm, görselle ilgili sorunuza yanıt veremiyorum veya görsel işlenirken bir hata oluştu."
 
     else:
-        # Sadece metin sorguları için OpenAI veya Gemini Pro (metin-sadece) kullanın
-        # Mevcut ise çekilen bağlamı önceliklendirin
         if context:
             prompt = f"Aşağıdaki belgelerden ve bilgilerden faydalanarak soruyu yanıtlayın. Eğer bilgi yoksa, 'Bilgi bulunamadı' diye belirtin.\n\nBelgeler:\n{context}\n\nSoru: {query_text}\nCevap:"
         else:
             prompt = f"Soru: {query_text}\nCevap:"
         
-        # Tercihe/maliyete göre OpenAI ve Gemini-Pro arasında seçim yapabilirsiniz
-        # Embedding modeliyle tutarlılık için burada OpenAI kullanılıyor
         chat_completion = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo", # Veya "gpt-4" tercih edilirse
+            model="gpt-3.5-turbo", 
             messages=[{"role": "user", "content": prompt}]
         )
         return chat_completion.choices[0].message.content
@@ -114,7 +103,7 @@ def health_check():
     return jsonify({"status": "ok", "service": "ai-agent-documentreader"}), 200
 
 # Main endpoint for AI Agent queries (other agents will use this)
-@app.route("/query", methods=["POST"])
+@app.route("/query", methods=["POST"]) 
 def query_document_endpoint():
     """
     Diğer AI ajanlarından veya kullanıcılardan gelen sorguları işler.
@@ -129,7 +118,6 @@ def query_document_endpoint():
 
     try:
         answer = retrieve_and_generate(query_text, image_data)
-        # Diğer ajanların kolayca tüketebilmesi için cevabı döndür
         return jsonify({"answer": answer}), 200
     except Exception as e:
         print(f"Sorgu işlenirken bir hata oluştu: {e}")
