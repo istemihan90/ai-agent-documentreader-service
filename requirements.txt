@@ -6,3 +6,4 @@ python-dotenv # Lokal ortam değişkenleri için
 gunicorn # Railway'de Flask uygulamasını çalıştırmak için
 httpx # OpenAI ve Pinecone istemcilerinde SSL doğrulamayı yönetmek için
 Flask-Cors
+google-cloud-storage
